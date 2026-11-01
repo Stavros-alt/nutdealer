@@ -1,6 +1,6 @@
 # ball game
 
-browser clone of the snow ball game, traced from the owned copy's data.win.
+browser clone of the snow ball game.
 
 ## run
 
@@ -15,7 +15,3 @@ python3 -m http.server
 * left / right choose at prompts, R reset attempt
 
 sprites belong to toby fox. code is MIT, see LICENSE.
-
-## ball game
-
-* BALL GAME!!!!!

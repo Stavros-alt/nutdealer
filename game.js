@@ -1,5 +1,4 @@
-// ball game. course, physics, collisions and dialogue traced from data.win.
-// sprites ripped from the owned copy. fixed 30hz step.
+// ball game. fixed 30hz step.
 "use strict";
 
 const cv = document.getElementById("game");
@@ -17,12 +16,11 @@ const SIGNBOX = { x: 440, y: 360, w: 20, h: 20 };
 const HOLESIGNBOX = { x: 440, y: 440, w: 20, h: 20 };
 
 // solidparent set: every wall cell is 20x20 except WIDE (40x20).
-// singletree true hitbox is (x+5,y+37,46,19), from spr_singletree bbox.
+// singletree true hitbox is (x+5,y+37,46,19).
 const SOLIDS = [];
 for (const arr of [S20, SUL, SUR, SDL, SDR])
   for (const [x, y] of arr) SOLIDS.push({ x, y, w: 20, h: 20 });
-// obj_solidlong Create_0 sets image_xscale=400, obj_solidtall image_yscale=400:
-// bbox margin 19*400 runs ~7600px, so these walls cross the whole room.
+// long and tall scale 400x, so walls cross the whole room.
 for (const [x, y] of LONG) SOLIDS.push({ x, y, w: 7601, h: 20 });
 for (const [x, y] of TALL) SOLIDS.push({ x, y, w: 20, h: 7601 });
 for (const [x, y] of WIDE) SOLIDS.push({ x, y, w: 40, h: 20 });
@@ -37,9 +35,60 @@ const NPCS = [
   { id: "snow", x: 597, y: 399, w: 6, h: 6 },
   { id: "drake", x: 442, y: 40, w: 25, h: 22 },
 ];
-// obj_golfedge: non-solid, invisible. ball-only bounce boxes.
+// obj_golfedge: not solid, invisible, ball only bounce boxes.
 const EDGES = [];
 for (const [x, y] of EDGE) EDGES.push({ x, y, w: 20, h: 20 });
+// doors loop: west exits land east, east exits land west.
+// rects cover the stacked instances, dests are the markers.
+const DOORS = [
+  { id: "B", x: 0, y: 120, w: 20, h: 60, dx: 720, dy: 80 },
+  { id: "A", x: 740, y: 80, w: 20, h: 60, dx: 20, dy: 120 },
+  { id: "C", x: 740, y: 420, w: 20, h: 60, dx: 20, dy: 120 },
+];
+// door transition. touch locks input, stacks black layers, 8 step fuse.
+// cut teleports with snap and fresh room state, r reuses it for reset.
+let TRANS = null;
+let SHADES = [];
+function checkDoors() {
+  if (creamConv === 2) return;
+  const b = playerBox();
+  for (const d of DOORS) {
+    if (rectsHit(b, d)) {
+      SHADES.push({ alpha: 0, tspeed: 0.08 });
+      if (!TRANS && !DLG) {
+        TRANS = { timer: 8, dest: d };
+        P.vx = P.vy = 0; P.sliding = false; P.moving = false; P.frame = 0;
+      }
+      break;
+    }
+  }
+}
+function stepFade() {
+  if (TRANS && --TRANS.timer <= 0) {
+    if (TRANS.reset) {
+      resetAttempt();
+    } else {
+      P.x = TRANS.dest.dx; P.y = TRANS.dest.dy;
+      if ((P.x % 3) === 2) P.x += 1;
+      if ((P.x % 3) === 1) P.x -= 1;
+      if ((P.y % 3) === 2) P.y += 1;
+      if ((P.y % 3) === 1) P.y -= 1;
+      px = P.x; py = P.y;
+      P.vx = P.vy = 0; P.sliding = false; P.moving = false; P.frame = 0;
+      B.size = 2; B.vx = B.vy = 0; B.t = 0; B.shrinko = 30;
+      B.rolltime = 0; B.timeinc = 0; B.alarm = 0; B.falling = 0; B.angle = 0;
+      B.live = true; B.x = GEN.x; B.y = GEN.y;
+      FLAG.on = false; respawnIn = 0;
+    }
+    holeRead = 0; creamConv = 0; creamJ = 0; sansFace = 0;
+    SHADES = SHADES.filter((s) => s.tspeed < 0);
+    SHADES.push({ alpha: 1, tspeed: -0.08 });
+    TRANS = null;
+    return;
+  }
+  for (const s of SHADES) s.alpha += s.tspeed;
+  SHADES = SHADES.filter((s) => s.alpha >= 0.02);
+}
 
 function img(f) { const i = new Image(); i.src = "assets/" + f; return i; }
 const SPR = {
@@ -68,10 +117,8 @@ const SPR = {
   r: [0, 1].map((n) => img(`spr_maincharar_${n}.png`)),
 };
 
-// tile overlay baked once from TILES/TILES_F (tiles.js, dumped via UTMT).
-// ground layer under objects, front layer (tree canopy, depth 999) over player.
-// tile layers cover the full dumped extents, past the room bounds.
-// TILE_OX/Y is the layer origin in world coords.
+// tile overlay bakes once, ground under, front over player.
+// covers full extents past room bounds.
 const TILE_OX = -40, TILE_OY = -60, TILE_W = 880, TILE_H = 660;
 const TILEC = document.createElement("canvas");
 TILEC.width = TILE_W; TILEC.height = TILE_H;
@@ -88,8 +135,7 @@ function bakeTiles() {
   for (const [x, y, sx, sy, w, h, b] of TILES_F) TILEFX.drawImage(b ? SPR.ruins : SPR.tileset, sx, sy, w, h, x - TILE_OX, y - TILE_OY, w, h);
   tilesReady = true;
 }
-// bitmap font pages, one tinted copy per text color (white glyphs on
-// transparent, from fnt_maintext/fnt_comicsans via UTMT).
+// one tinted font copy per text color.
 const FONTTINT = { main: null, comic: null };
 function tintAtlas(atlas, color) {
   const c = document.createElement("canvas");
@@ -166,7 +212,12 @@ addEventListener("keydown", (e) => {
 // gml keypress has no autorepeat. held keys poll from keys, not events.
   if (e.repeat) return;
   keys[k] = true;
-  if (k === "r") { closeDialogue(); resetAttempt(); }
+  if (k === "r" && !TRANS) {
+    closeDialogue();
+    SHADES.push({ alpha: 0, tspeed: 0.08 });
+    TRANS = { timer: 8, reset: true };
+    P.vx = P.vy = 0; P.sliding = false; P.moving = false; P.frame = 0;
+  }
   if (k === "z" || k === "enter") pressConfirm();
   if (k === "x" || k === "shift") pressCancel();
   if (k === "arrowleft") moveChoice(-1);
@@ -212,8 +263,7 @@ function lineSolidH(x1, x2, y) {
   return SOLIDS.some((s) => b >= s.x && a <= s.x + s.w - 1 && y >= s.y && y <= s.y + s.h - 1);
 }
 
-// prize only raises the flag. gold and flavor text come from reading
-// the hole sign afterwards (obj_readable_room2 Alarm), like the original.
+// prize only raises the flag, payout happens at the hole sign.
 function prize(idx) {
   FLAG.on = true; FLAG.idx = idx; FLAG.y = HOLE.y + 10;
   holeRead = 0;
@@ -262,11 +312,11 @@ function sansStrings(msc, choice) {
   return [];
 }
 
-// dialogue box engine. ported from obj_dialoguer + obj_base_writer.
-// typer 5: Determination; typer 17: comic voice. face: sans portrait or null.
+// dialogue box engine.
+// typer 5 normal, 17 comic, face means sans portrait.
 function openDialogue(strs, opts) {
   const side = P.y > CAM.y + 130 ? 0 : 1;
-  // writer coords are view-locked (room point vx+16 lands 16px into the view).
+  // writer coords are view locked (room point vx+16 lands 16px into the view).
   DLG = {
     strings: strs.map((k) => TEXT[k] || k), idx: 0, pos: 0, halt: 0, pause: 0,
     typer: opts.typer || 5, face: opts.face || null,
@@ -282,6 +332,7 @@ function closeDialogue() {
   if (cb) cb();
 }
 function pressConfirm() {
+  if (TRANS) return;
   if (!DLG) { tryInteract(); return; }
   if (DLG.choice) { confirmChoice(); return; }
   if (DLG.halt === 1) {
@@ -342,8 +393,7 @@ function dlgStep() {
     return;
   }
 }
-// interact trigger, from obj_mainchara Other_10: facing rectangles
-// against obj_interactable boxes (readables + npc sprite boxes).
+// interact trigger: facing rectangles vs readable and npc boxes.
 function interactTargets() {
   const t = [];
   t.push({ id: "sign", box: SIGNBOX });
@@ -397,7 +447,7 @@ function openHoleDialogue() {
   }
   holeRead = 1;
 }
-// nicecream conversation machine (Alarm_0 + Step_1, tundra8 first talk).
+// nicecream conversation machine.
 function talkCream() {
   if (creamFlag !== 0) { openDialogue(["nc_135"], { typer: 5 }); return; }
   if (creamConv !== 0) return;
@@ -419,13 +469,15 @@ function stepCream() {
 }
 function creamSprite() {
   if (creamConv === 2) return SPR.creamAnim;
-  if (creamConv >= 3 && DLG && DLG.halt === 0) return SPR.creamHappy[Math.floor(tick / 5) % 2];
-  if (creamConv >= 3) return SPR.creamHappy[0];
+  if (creamFlag || creamConv >= 3) {
+    if (DLG && DLG.halt === 0) return SPR.creamHappy[Math.floor(tick / 5) % 2];
+    return SPR.creamHappy[0];
+  }
   return SPR.cream;
 }
 
-// corner slide handlers, ported from Collision_10..13 (sdr, sdl, sur, sul).
-// px/py are step-start (xprevious/yprevious); box is recomputed live.
+// corner slide handlers for sdr sdl sur sul.
+// px py are step start, box recomputed live.
 function hitSdr() {
   const b = playerBox();
   const L = b.x, T = b.y, R = b.x + 19, Bt = b.y + 10;
@@ -498,7 +550,7 @@ function hitSul() {
   if ((P.y % 3) !== 0) P.y += 1;
   P.moving = false;
 }
-// solidparent handler (Collision_822): revert, then slide along the wall.
+// solidparent handler: revert, then slide along the wall.
 function hitSolid() {
   P.x = px; P.y = py;
   const L = P.x, T = P.y + 19, R = P.x + 19, Bt = P.y + 29;
@@ -516,7 +568,7 @@ function hitSolid() {
   }
   P.moving = false;
 }
-// solidnpcparent handler (Collision_1367): hard revert.
+// solidnpcparent handler: hard revert.
 function hitNpc() {
   P.x = px; P.y = py;
   P.moving = false;
@@ -531,19 +583,18 @@ function collidePlayer() {
   if (NPCS.some((s) => rectsHit(playerBox(), s))) hitNpc();
 }
 
-// doorparent overlap uses the feet bbox, same as every other collision.
+// ice check uses the feet bbox.
 function iceOverlap() {
   return ICE.some(([ix, iy]) => rectsHit(playerBox(), { x: ix, y: iy, w: 40, h: 40 }));
 }
-// ice slide take, from obj_iceevent Other_19: four independent held-key ifs
-// (up, down, right, left), so down overwrites up and left overwrites right.
+// four independent held key ifs, down wins over up, left over right.
 function iceTake(L, R, U, D) {
   if (U) P.vy = -3;
   if (D) P.vy = 3;
   if (R) P.vx = 3;
   if (L) P.vx = -3;
 }
-// slide lock collapses every collision to a step-start revert.
+// slide lock collapses every collision to a step start revert.
 // corner slides and wall sidesteps need interact==0, reverts do not.
 function slideCollide() {
   const b = playerBox();
@@ -583,7 +634,7 @@ function walkInput(L, R, U, D) {
   }
 }
 function stepPlayer() {
-  if (DLG || creamConv === 2) { P.moving = false; P.frame = 0; return; }
+  if (DLG || TRANS || creamConv === 2) { P.moving = false; P.frame = 0; return; }
   px = P.x; py = P.y;
   const L = keys["arrowleft"] || keys["a"], R = keys["arrowright"] || keys["d"];
   const U = keys["arrowup"] || keys["w"], D = keys["arrowdown"] || keys["s"];
@@ -606,7 +657,7 @@ function stepPlayer() {
         collidePlayer();
       }
     } else {
-// locked glide, no input. overlap re-arms; stopped takes held keys.
+// locked glide, no input. overlap extends, stopped takes held keys.
       if (iceOverlap()) {
         P.iceT = 3;
         if (P.vx === 0 && P.vy === 0) iceTake(L, R, U, D);
@@ -650,6 +701,8 @@ function stepPlayer() {
 }
 function step() {
   stepPlayer();
+  stepFade();
+  checkDoors();
   stepCream();
   dlgStep();
 
@@ -734,7 +787,7 @@ function text(str, x, y, color = "#fff", size = 16, font) {
   ctx.font = `${size}px ${font || "DeterminationSans"}, monospace`;
   ctx.fillStyle = color; ctx.fillText(str, x, y);
 }
-// dialogue renderer. view coords in, canvas 2x out, like the writer Draw.
+// dialogue renderer. view coords in, canvas 2x out.
 function dlgPen() {
   const d = DLG;
   let penX = d.wx, penY = d.wy, color = "#fff", ci = 0;
@@ -766,7 +819,7 @@ function dlgPen() {
 }
 function drawDialogue() {
   const d = DLG;
-  // box, from obj_dialoguer Draw_0. white shell, black inset. view locked.
+  // dialogue box. white shell, black inset, view locked.
   let wy0, wy1, by0, by1;
   if (d.side === 0) { wy0 = 5; wy1 = 80; by0 = 8; by1 = 77; }
   else { wy0 = 160; wy1 = 235; by0 = 163; by1 = 232; }
@@ -809,7 +862,7 @@ function draw() {
   else ctx.fillRect(camX, camY, 320, 240);
   ctx.drawImage(SPR.hole, HOLE.x, HOLE.y);
 
-  // actors y-sorted like scr_depth: key = y*10 + h*10, ball uses h*4.
+  // y sort key is y10 plus h10, ball uses h4.
   const actors = [
     { k: 20 * 10 + 60 * 10, f: () => ctx.drawImage(creamSprite(), 60, 20) },
     { k: 20 * 10 + 42 * 10, f: () => ctx.drawImage(SPR.drake, 440, 20) },
@@ -819,7 +872,7 @@ function draw() {
     } },
     { k: 400 * 10 + 10 * 10, f: () => ctx.drawImage(SPR.snow, 600 - 5, 400 - 5) },
   ];
-  // singletrees y-sort with actors (Other_4 Room Start runs scr_depth).
+  // singletrees sort with actors.
   for (const [x, y] of TREE) actors.push({ k: y * 10 + 60 * 10, f: () => ctx.drawImage(SPR.tree, x, y) });
   if (B.live) {
     actors.push({ k: B.y * 10 + 40, f: () => {
@@ -856,6 +909,12 @@ function draw() {
   text(`${(B.rolltime / 30).toFixed(1)}s   ${gold}G`, 12, 24);
   if (best) text(`best ${best.toFixed(1)}s`, 12, 44, "#9fb0c3");
   else text(`size ${B.live ? (B.size <= 0.6 ? "tiny" : B.size < 1.4 ? "small" : "big") : "-"}`, 12, 44, "#9fb0c3");
+// fader layers stack above everything.
+  for (const s of SHADES) {
+    if (s.alpha <= 0) continue;
+    ctx.fillStyle = `rgba(0,0,0,${Math.min(1, s.alpha)})`;
+    ctx.fillRect(0, 0, cv.width, cv.height);
+  }
 }
 let tick = 0;
 
