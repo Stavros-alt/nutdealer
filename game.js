@@ -201,6 +201,8 @@ function sfx(n) {
   }
   const v = AC.createBufferSource();
   const g = AC.createGain();
+// txtsans file runs hot, pull it down to txt1 level.
+  g.gain.value = n === "snd_txtsans" ? 0.38 : 1;
   v.buffer = SBUF[n]; v.connect(g); g.connect(AC.destination); v.start();
   SPLAY[n] = { v, g };
 }
