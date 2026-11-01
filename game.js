@@ -195,14 +195,18 @@ function bootAudio() {
 // 3ms fade on the cutoff so 30 restarts a second do not click.
 function sfx(n) {
   if (!AC || !SBUF[n]) return;
+  const now = AC.currentTime;
   if (SPLAY[n]) {
     const o = SPLAY[n];
-    try { o.g.gain.linearRampToValueAtTime(0, AC.currentTime + 0.003); o.v.stop(AC.currentTime + 0.01); } catch {}
+    try { o.g.gain.cancelScheduledValues(now); o.g.gain.setTargetAtTime(0, now, 0.004); o.v.stop(now + 0.03); } catch {}
   }
   const v = AC.createBufferSource();
   const g = AC.createGain();
 // txtsans file runs hot, pull it down to txt1 level.
-  g.gain.value = n === "snd_txtsans" ? 0.38 : 1;
+  const lvl = n === "snd_txtsans" ? 0.38 : 1;
+// short ramps on both ends, restarts would click otherwise.
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(lvl, now + 0.003);
   v.buffer = SBUF[n]; v.connect(g); g.connect(AC.destination); v.start();
   SPLAY[n] = { v, g };
 }
